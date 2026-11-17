@@ -1,0 +1,9 @@
+name: Diagnostico
+on: workflow_dispatch
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests && python diag.py
