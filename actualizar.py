@@ -42,7 +42,7 @@ def iso(s):
     m = re.search(r'ISO: ([^)]+)\)', s or '')
     return m.group(1)[:16] if m else ''
 
-def buscar(estado, tipo, sub=''):
+def buscar1(estado, tipo, sub='', orden='asc'):
     f = [('campo[0]','SUBASTA.ORIGEN'),('dato[0]',''),('campo[1]','SUBASTA.AUTORIDAD'),('dato[1]',''),
          ('campo[2]','SUBASTA.ESTADO.CODIGO'),('dato[2]',estado),('campo[3]','BIEN.TIPO'),('dato[3]',tipo),('dato[4]',sub),
          ('campo[5]','BIEN.DIRECCION'),('dato[5]',''),('campo[6]','BIEN.CODPOSTAL'),('dato[6]',''),('campo[7]','BIEN.LOCALIDAD'),('dato[7]',''),
@@ -50,13 +50,21 @@ def buscar(estado, tipo, sub=''):
     for i in range(10, 15): f += [(f'campo[{i}]', f'SUBASTA.NUM_CUENTA_EXPEDIENTE_{i-9}'), (f'dato[{i}]', '')]
     f += [('campo[15]','SUBASTA.ID_SUBASTA_BUSCAR'),('dato[15]',''),('campo[16]','SUBASTA.ACREEDORES'),('dato[16]',''),
           ('campo[17]','SUBASTA.FECHA_FIN'),('dato[17][0]',''),('dato[17][1]',''),('campo[18]','SUBASTA.FECHA_INICIO'),('dato[18][0]',''),('dato[18][1]',''),
-          ('page_hits','500'),('sort_field[0]','SUBASTA.FECHA_FIN'),('sort_order[0]','asc'),('accion','Buscar')]
+          ('page_hits','500'),('sort_field[0]','SUBASTA.FECHA_FIN'),('sort_order[0]',orden),('accion','Buscar')]
     r = S.post(BASE + 'subastas_ava.php', data=f, timeout=60); r.raise_for_status()
     out = []
     for li in re.findall(r'<li class="resultado-busqueda">(.*?)</li>', r.text, re.S):
         m = re.search(r'idSub=([^&"]+)', li)
         if m: out.append((m.group(1), bool(re.search(r'lotes\)', txt(li)))))
     return out
+
+def buscar(estado, tipo, sub=''):
+    a = buscar1(estado, tipo, sub, 'asc')
+    if len(a) < 500: return a
+    vistos = {x[0] for x in a}   # el BOE devuelve 500 como máximo: se completa con el orden inverso
+    b = [x for x in buscar1(estado, tipo, sub, 'desc') if x[0] not in vistos]
+    if len(b) >= 500 - (len(a) - 500): print('Aviso: puede haber más de 1.000 resultados para', estado, tipo)
+    return a + b
 
 def ocupada(b):
     p = b.get('Situación posesoria', ''); t = p + ' ' + b.get('Información adicional', '') + ' ' + b.get('Descripción', '')
