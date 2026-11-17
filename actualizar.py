@@ -14,13 +14,13 @@ HOY = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=1))).date
 S = requests.Session()
 S.headers['User-Agent'] = 'Mozilla/5.0 (catalogo dominguezdiaz.es; contacto ddominguezddiaz@gmail.com)'
 
-def get(url, **kw):
-    for i in range(4):
+def get(url, intentos=3, **kw):
+    for i in range(intentos):
         try:
             r = S.get(url, timeout=25, **kw)
             if r.status_code == 200: return r
         except requests.RequestException: pass
-        time.sleep(2 + 2 * i)
+        if i < intentos - 1: time.sleep(2 + 2 * i)
     raise RuntimeError('No se pudo descargar ' + url)
 
 def txt(s):
@@ -110,7 +110,7 @@ def vehiculo(sid, est, g, b, docs):
     im = []
     for h in docs:
         try:
-            ct = S.head(BASE + h, timeout=30).headers.get('content-type', '')
+            ct = S.head(BASE + h, timeout=15).headers.get('content-type', '')
             if 'image' in ct: im.append(h.replace('verDocumento.php?', ''))
         except requests.RequestException: pass
     if im: r['im'] = im
@@ -129,8 +129,13 @@ def ficha(item):
         else: out.append(vehiculo(sid, est, g, b, docs))
     elif kind == 'v':
         n = max([int(x) for x in re.findall(r'idLote(?:=|%3D)(\d+)', h3)] or [0])
-        for k in range(1, n + 1):
-            b = rows(get(BASE + 'detalleSubasta.php?idSub=' + sid + '&ver=3&idLote=' + str(k)).text)
+        fallos = 0
+        for k in range(1, min(n, 150) + 1):
+            try: b = rows(get(BASE + 'detalleSubasta.php?idSub=' + sid + '&ver=3&idLote=' + str(k), intentos=1).text)
+            except Exception:
+                fallos += 1
+                if fallos >= 3: break
+                continue
             if not es_vivienda(b.get('Descripción', '')): continue
             r = vivienda(sid, k, est, g, b)
             if r and r.get('rc'): out.append(r)
