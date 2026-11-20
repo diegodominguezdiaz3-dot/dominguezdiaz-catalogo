@@ -1,12 +1,15 @@
-"""Actualiza catalogo.json con las subastas abiertas del Portal de Subastas del BOE,
-las fotos de la Agencia Tributaria (CC BY 4.0) y las fachadas del Catastro.
+"""Actualiza catalogo.json con las subastas abiertas del Portal de Subastas del BOE y del
+portal de subastas de la Seguridad Social, las fotos de la Agencia Tributaria (CC BY 4.0)
+y las fachadas del Catastro.
 Se ejecuta cada día en GitHub Actions (.github/workflows/actualizar.yml)."""
-import json, os, re, sys, time, html, datetime, concurrent.futures as cf
+import json, os, re, sys, time, html, datetime, hashlib, unicodedata, concurrent.futures as cf
 import requests
 
 BASE = 'https://subastas.boe.es/'
 AEAT = 'https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/taiif/subastaInmuebles/data2/bienes.js'
 CAT = 'https://ovc.catastro.meh.es/OVCServWeb/OVCWcfLibres/OVCFotoFachada.svc/RecuperarFotoFachadaGet?ReferenciaCatastral='
+SS = 'https://w6.seg-social.es/subastas/SubaSeControladorInter'
+SUBT = {'502': 'Local comercial', '503': 'Garaje', '504': 'Trastero', '505': 'Nave industrial', '506': 'Solar', '507': 'Finca rústica', '599': 'Otros'}
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 EST = os.path.join(RAIZ, 'estado.json')
 T0 = time.time()
@@ -124,8 +127,27 @@ def vehiculo(sid, est, g, b, docs):
     if im: r['im'] = im
     return r
 
+def inmueble(sid, lo, est, g, b, tb):
+    if ocupada(b): return None
+    d = b.get('Descripción', ''); t = d + ' ' + b.get('Información adicional', '')
+    r = {'id': sid, 'k': 'i', 'tb': tb, 'e': est, 'o': org(g.get('Tipo de subasta')),
+         'val': num(b.get('Valor Subasta') if lo else g.get('Valor subasta')), 'dep': num(b.get('Importe del depósito') if lo else g.get('Importe del depósito')),
+         'fin': iso(g.get('Fecha de conclusión')), 'ini': iso(g.get('Fecha de inicio')), 'loc': b.get('Localidad', ''),
+         'pr': b.get('Provincia', '').split('/')[0], 'dir': b.get('Dirección', '')[:70], 'cp': b.get('Código Postal', '')}
+    if lo: r['lo'] = lo
+    rc = re.sub(r'\s', '', b.get('Referencia catastral', '')).upper()
+    if re.match(r'^[0-9A-Z]{14}', rc): r['rc'] = rc[:14]
+    m = re.search(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s?(?:m2|m²|mts|metros cuadrados)', t, re.I)
+    if m: r['m2'] = m.group(1)
+    if b.get('Situación posesoria', '').startswith('Sin ocupantes'): r['pos'] = 'Sin ocupantes'
+    return r
+
+def tipo_lote(h):
+    m = re.search(r'Inmueble\s*\(([^)]+)\)', txt(h))
+    return m.group(1).strip() if m else 'Otros'
+
 def ficha(item):
-    sid, lots, kind, est = item; out = []
+    sid, lots, kind, est, sub = item; out = []
     h1 = get(BASE + 'detalleSubasta.php?idSub=' + sid + '&ver=1').text; g = rows(h1)
     docs = [html.unescape(x) for x in re.findall(r'href="(verDocumento\.php\?[^"]+)"', h1)]
     h3 = get(BASE + 'detalleSubasta.php?idSub=' + sid + '&ver=3').text
@@ -134,26 +156,131 @@ def ficha(item):
         if kind == 'v':
             r = vivienda(sid, None, est, g, b)
             if r: out.append(r)
+        elif kind == 'i':
+            r = vivienda(sid, None, est, g, b) if es_vivienda(b.get('Descripción', '')) else inmueble(sid, None, est, g, b, SUBT.get(sub, 'Otros'))
+            if r: out.append(r)
         else: out.append(vehiculo(sid, est, g, b, docs))
-    elif kind == 'v':
+    else:
         n = max([int(x) for x in re.findall(r'idLote(?:=|%3D)(\d+)', h3)] or [0])
         fallos = 0
         for k in range(1, min(n, 150) + 1):
-            try: b = rows(get(BASE + 'detalleSubasta.php?idSub=' + sid + '&ver=3&idLote=' + str(k), intentos=1).text)
+            try: hk = get(BASE + 'detalleSubasta.php?idSub=' + sid + '&ver=3&idLote=' + str(k), intentos=1).text
             except Exception:
                 fallos += 1
                 if fallos >= 3: break
                 continue
-            if not es_vivienda(b.get('Descripción', '')): continue
-            r = vivienda(sid, k, est, g, b)
-            if r and r.get('rc'): out.append(r)
+            b = rows(hk)
+            if es_vivienda(b.get('Descripción', '')): r = vivienda(sid, k, est, g, b)
+            else:
+                tl = tipo_lote(hk)
+                r = vivienda(sid, k, est, g, b) if tl == 'Vivienda' else inmueble(sid, k, est, g, b, 'Local comercial' if tl.startswith('Local') else tl)
+            if r: out.append(r)
     return out
+
+S2 = requests.Session()
+S2.headers['User-Agent'] = S.headers['User-Agent']
+
+def ss_get(url):
+    for i in range(3):
+        try:
+            r = S2.get(url, timeout=40)
+            if r.status_code == 200:
+                r.encoding = 'iso-8859-1'; return r.text
+        except requests.RequestException: pass
+        time.sleep(3 + 3 * i)
+    raise RuntimeError('No se pudo descargar ' + url)
+
+def entre(t, a, b):
+    m = re.search(re.escape(a) + r'\s*(.*?)\s*(?:' + b + ')', t)
+    return m.group(1).strip() if m else ''
+
+def sin_acentos(s):
+    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn').upper().strip()
+
+def tipo_urbana(d):
+    for p, l in [(r'\bLOCAL', 'Local comercial'), (r'GARAJE|APARCAMIENTO|PARKING', 'Garaje'), (r'TRASTERO', 'Trastero'),
+                 (r'\bNAVE', 'Nave industrial'), (r'SOLAR|PARCELA', 'Solar')]:
+        if re.search(p, d): return l
+    return 'Otros'
+
+def seg_social(provs):
+    """Bienes de la Seguridad Social (fincas urbanas y rústicas, vehículos) con subasta futura."""
+    ahora = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=1))).replace(tzinfo=None)
+    norm = {sin_acentos(p): p for p in provs}
+    def prov(s):
+        for parte in [x.strip() for x in s.split('/')][::-1]:
+            if sin_acentos(parte) in norm: return norm[sin_acentos(parte)]
+        return s.split('/')[-1].strip().title()
+    out = []
+    for codigo in ('0102', '0101', '0211'):
+        S2.cookies.clear()
+        ss_get(SS + '?opcion=10&EMB_TIPOBIEN=' + codigo + '&ok=Continuar')
+        filas, p = [], 1
+        while p <= 80:
+            h = ss_get(f'{SS}?pagina={p}&opcion=8&tipoOperacion=1')
+            for cap, tabla in re.findall(r'<caption>(.*?)</caption>(.*?)</table>', h, re.S):
+                pr = txt(cap).split(' - ')[1].strip() if ' - ' in txt(cap) else ''
+                for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', tabla, re.S):
+                    m = re.search(r'EMB_ID=(\d+)', tr); tds = [txt(x) for x in re.findall(r'<td[^>]*>(.*?)</td>', tr, re.S)]
+                    if m and len(tds) >= 7: filas.append((m.group(1), pr, tds))
+            if f'pagina={p + 1}&' not in h: break
+            p += 1
+        for emb, pr, tds in filas:
+            fm = re.match(r'(\d{2})/(\d{2})/(\d{4})\s+(\d{2}:\d{2})', tds[6])
+            if not fm: continue
+            fin = f'{fm.group(3)}-{fm.group(2)}-{fm.group(1)}T{fm.group(4)}'
+            if datetime.datetime.fromisoformat(fin) <= ahora: continue
+            try: t = txt(ss_get(f'{SS}?opcion=13&EMB_ID={emb}&opcion2=1&tipoOperacion=1'))
+            except Exception: continue
+            gen = entre(t, 'Descripción General del Bien:', 'Descripción Detallada:')
+            det = entre(t, 'Descripción Detallada:', r'Marca:|Localización:|Subasta Fecha:')
+            lote = entre(t, 'Lote: Número', r'\.') or '1'
+            exp = re.sub(r'\D', '', entre(t, 'Expediente:', r'Mostrando|$'))
+            lug = entre(t, 'Lugar:', r'Lote:')
+            todo = (gen + ' ' + det).upper()
+            r = {'src': 'ss', 'o': 'Seguridad Social', 'e': 'EJ', 'val': num(tds[5]), 'tas': num(tds[2]),
+                 'car': 0 if 'SIN CARGA' in tds[3].upper() else num(tds[3]), 'fin': fin, 'pr': prov(pr), 'lug': lug[:80]}
+            if codigo == '0211':
+                mat = entre(t, 'Matrícula:', r'Bastidor:|Subasta')
+                r.update({'k': 'c', 'mk': entre(t, 'Marca:', 'Modelo:'), 'md': entre(t, 'Modelo:', 'Matrícula:'),
+                          'mat': (re.search(r'PRIMERA MATRICULACION:\s*([\d/-]+)', todo) or [None, ''])[1], 'd': gen[:90], 'info': det[:160]})
+                cb = re.search(r'COMBUSTIBLE:\s*(DIESEL|DIÉSEL|GASOLINA|ELECTRICO|ELÉCTRICO|HIBRIDO|HÍBRIDO)', todo)
+                if cb: r['cb'] = {'D': 'Diésel', 'G': 'Gasolina', 'E': 'Eléctrico', 'H': 'Híbrido'}[sin_acentos(cb.group(1))[0]]
+                clave = mat or hashlib.md5(gen.encode()).hexdigest()[:6]
+            else:
+                if re.search(r'OCUPAD|ARRENDAD|INQUILIN|VIVIENDA HABITUAL DEL DEUDOR', todo): continue
+                loc = entre(t, 'Localización:', r'Subasta Fecha:')
+                mc = re.search(r'\((\d{5})\)\s*(.*)$', loc)
+                r.update({'dir': (loc[:mc.start()] if mc else loc).strip()[:70], 'cp': mc.group(1) if mc else '', 'loc': mc.group(2).strip() if mc else ''})
+                rc = re.search(r'REF(?:ERENCIA)?\.?\s*CATASTRAL:?\s*([0-9A-Z]{14})', todo)
+                if rc: r['rc'] = rc.group(1)
+                m = re.search(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s?(?:M2|M²|METROS CUADRADOS)', todo)
+                if m: r['m2'] = m.group(1)
+                if codigo == '0102' and es_vivienda(gen + ' ' + det):
+                    r['k'] = 'v'
+                    tg = [l for pat, l in ETQ if re.search(pat, gen + ' ' + det, re.I)]
+                    if tg: r['tg'] = tg
+                    m = re.search(r'(\d|UNO|UNA|DOS|TRES|CUATRO|CINCO|SEIS)\s+(?:DORMITORIOS|HABITACIONES)', todo)
+                    if m: r['dor'] = NUM.get(m.group(1).lower()) or int(m.group(1))
+                else:
+                    r.update({'k': 'i', 'tb': 'Finca rústica' if codigo == '0101' else tipo_urbana(todo)})
+                clave = r.get('rc') or hashlib.md5(gen.encode()).hexdigest()[:6]
+            r['id'] = 'SS-' + exp + '-L' + lote + '-' + clave
+            r['gen'] = gen[:90]
+            out.append(r)
+    vistos, res = set(), []
+    for x in out:
+        if x['id'] not in vistos: vistos.add(x['id']); res.append(x)
+    return res
 
 def main():
     est = json.load(open(EST, encoding='utf-8')) if os.path.exists(EST) else {'alta': {}, 'rc_ok': [], 'rc_no': []}
     lista = []
-    for kind, estado, tipo, sub in [('v','EJ','I','501'),('v','PU','I','501'),('c','EJ','V',''),('c','PU','V','')]:
-        lista += [(sid, lots, kind, estado) for sid, lots in buscar(estado, tipo, sub)]
+    busquedas = [('v','EJ','I','501'),('v','PU','I','501'),('c','EJ','V',''),('c','PU','V','')] + [('i', e, 'I', s) for s in SUBT for e in ('EJ', 'PU')]
+    vistos = set()
+    for kind, estado, tipo, sub in busquedas:
+        for sid, lots in buscar(estado, tipo, sub):
+            if sid not in vistos: vistos.add(sid); lista.append((sid, lots, kind, estado, sub))
     print('Subastas encontradas en el BOE:', len(lista))
     if len(lista) < 100: sys.exit('Muy pocas subastas: algo falla en el BOE. No se actualiza.')
     boe, errores = [], 0
@@ -165,7 +292,13 @@ def main():
             if isinstance(res, Exception): errores += 1
             else: boe += res
             if n % 50 == 0: print(f'  {n}/{len(lista)} fichas · {int(time.time()-T0)} s', flush=True)
-    print('Fichas leídas:', len(boe), '| viviendas:', sum(x['k']=='v' for x in boe), '| lotes:', sum('lo' in x for x in boe), '| vehículos:', sum(x['k']=='c' for x in boe), '| errores:', errores)
+    print('Fichas leídas:', len(boe), '| viviendas:', sum(x['k']=='v' for x in boe), '| otros inmuebles:', sum(x['k']=='i' for x in boe), '| lotes:', sum('lo' in x for x in boe), '| vehículos:', sum(x['k']=='c' for x in boe), '| errores:', errores)
+    # Seguridad Social (si falla, se sigue solo con el BOE)
+    try:
+        ss = seg_social({x['pr'] for x in boe if x.get('pr')})
+        print('Seguridad Social:', len(ss), '| viviendas:', sum(x['k']=='v' for x in ss), '| otros inmuebles:', sum(x['k']=='i' for x in ss), '| vehículos:', sum(x['k']=='c' for x in ss))
+        boe += ss
+    except Exception as e: print('Aviso Seguridad Social:', e)
     # fotos de la Agencia Tributaria
     av = {}
     try:
@@ -174,7 +307,6 @@ def main():
             m = re.search(r'const ' + nombre + r'\s*=\s*(\[.*?\]);', t, re.S)
             for x in json.loads(m.group(1)) if m else []:
                 if not x.get('fotos'): continue
-                if nombre == 'inmueblesSubasta' and not (x.get('tipo') == 1 or (x.get('tipo') == 6 and re.search(r'vivienda|casa|chalet|unifamiliar', x.get('descripcion', ''), re.I))): continue
                 av.setdefault(x['subasta'], []).append(x)
     except Exception as e: print('Aviso AEAT:', e)
     # fachadas del Catastro (solo referencias nuevas)
@@ -192,13 +324,15 @@ def main():
     out = []
     for x in boe:
         c = av.get(x['id']) if 'lo' not in x else None
+        p = None
         if c:
-            p = next((a for a in c if a.get('refCatastro', '')[:14] and a['refCatastro'][:14] == x.get('rc')), c[0])
+            p = next((a for a in c if a.get('refCatastro', '')[:14] and a['refCatastro'][:14] == x.get('rc')), c[0] if len(c) == 1 else None)
+        if p:
             x['ap'] = [p['id'] + '/' + f for f in p['fotos'][:6]]
             if x['k'] == 'c':
                 x.pop('im', None)
                 if p.get('combustible'): x['cb'] = {'G': 'Gasolina', 'D': 'Diésel', 'E': 'Eléctrico'}.get(p['combustible'], '')
-        if x['k'] == 'v' and not x.get('ap') and x.get('rc') not in ok: continue
+        if x.get('rc') and x['rc'] not in ok: x['nf'] = 1   # sin foto de fachada en el Catastro
         key = x['id'] + ('#' + str(x['lo']) if 'lo' in x else '')
         x['alta'] = est['alta'].setdefault(key, HOY)
         out.append(x)
