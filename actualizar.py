@@ -214,7 +214,9 @@ def seg_social(provs):
     out = []
     for codigo in ('0102', '0101', '0211'):
         S2.cookies.clear()
-        ss_get(SS + '?opcion=10&EMB_TIPOBIEN=' + codigo + '&ok=Continuar')
+        ss_get('https://w6.seg-social.es/subastas/')
+        h0 = ss_get(SS + '?opcion=10&EMB_TIPOBIEN=' + codigo + '&ok=Continuar')
+        print('  SS', codigo, 'paso 2:', re.sub(r'\s+', ' ', txt(h0))[300:420], flush=True)
         filas, p = [], 1
         while p <= 80:
             h = ss_get(f'{SS}?pagina={p}&opcion=8&tipoOperacion=1')
@@ -223,6 +225,7 @@ def seg_social(provs):
                 for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', tabla, re.S):
                     m = re.search(r'EMB_ID=(\d+)', tr); tds = [txt(x) for x in re.findall(r'<td[^>]*>(.*?)</td>', tr, re.S)]
                     if m and len(tds) >= 7: filas.append((m.group(1), pr, tds))
+            if p == 1: print('  SS', codigo, 'resultados:', len(filas), re.sub(r'\s+', ' ', txt(h))[300:400], flush=True)
             if f'pagina={p + 1}&' not in h: break
             p += 1
         for emb, pr, tds in filas:
