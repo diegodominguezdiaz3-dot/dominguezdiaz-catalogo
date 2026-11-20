@@ -239,7 +239,7 @@ def seg_social(provs):
             lug = entre(t, 'Lugar:', r'Lote:')
             todo = (gen + ' ' + det).upper()
             r = {'src': 'ss', 'o': 'Seguridad Social', 'e': 'EJ', 'val': num(tds[5]), 'tas': num(tds[2]),
-                 'car': 0 if 'SIN CARGA' in tds[3].upper() else num(tds[3]), 'fin': fin, 'pr': prov(pr), 'lug': lug[:80]}
+                 'car': 0 if 'SIN CARGA' in tds[3].upper() else num(tds[3]), 'fin': fin, 'dep': round(num(tds[5]) * 0.25, 2) if num(tds[5]) else None, 'pr': prov(pr), 'lug': lug[:80]}
             if codigo == '0211':
                 mat = entre(t, 'Matrícula:', r'Bastidor:|Subasta')
                 r.update({'k': 'c', 'mk': entre(t, 'Marca:', 'Modelo:'), 'md': entre(t, 'Modelo:', 'Matrícula:'),
