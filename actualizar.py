@@ -219,7 +219,7 @@ def seg_social(provs):
         print('  SS', codigo, 'paso 2:', re.sub(r'\s+', ' ', txt(h0))[300:420], flush=True)
         filas, p = [], 1
         while p <= 80:
-            h = ss_get(f'{SS}?pagina={p}&opcion=8&tipoOperacion=1')
+            h = ss_get(f'{SS}?opcion=8&tipoOperacion=1' if p == 1 else f'{SS}?pagina={p}&opcion=8&tipoOperacion=1')
             for cap, tabla in re.findall(r'<caption>(.*?)</caption>(.*?)</table>', h, re.S):
                 pr = txt(cap).split(' - ')[1].strip() if ' - ' in txt(cap) else ''
                 for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', tabla, re.S):
@@ -325,6 +325,8 @@ def main():
             elif tiene is False: no.add(rc)
     print('Fotos AEAT:', len(av), '| referencias catastrales nuevas:', len(nuevas), '| con foto:', len(set(nuevas) & ok), '| sin respuesta:', len(set(nuevas) - ok - no))
     out = []
+    # La primera vez con los nuevos tipos de bien no se marcan todos como «Novedad»
+    alta_nueva = HOY if est.get('v2') else (datetime.date.fromisoformat(HOY) - datetime.timedelta(days=8)).isoformat()
     for x in boe:
         c = av.get(x['id']) if 'lo' not in x else None
         p = None
@@ -337,8 +339,9 @@ def main():
                 if p.get('combustible'): x['cb'] = {'G': 'Gasolina', 'D': 'Diésel', 'E': 'Eléctrico'}.get(p['combustible'], '')
         if x.get('rc') and x['rc'] not in ok: x['nf'] = 1   # sin foto de fachada en el Catastro
         key = x['id'] + ('#' + str(x['lo']) if 'lo' in x else '')
-        x['alta'] = est['alta'].setdefault(key, HOY)
+        x['alta'] = est['alta'].setdefault(key, alta_nueva)
         out.append(x)
+    est['v2'] = 1
     anteriores = len(est['alta'])
     if anteriores and len(out) < 0.6 * min(anteriores, 400): sys.exit(f'El catálogo cae de golpe ({len(out)} frente a {anteriores}). No se actualiza.')
     vig = {x['id'] + ('#' + str(x['lo']) if 'lo' in x else '') for x in out}
