@@ -144,7 +144,7 @@ def inmueble(sid, lo, est, g, b, tb):
 
 def tipo_lote(h):
     m = re.search(r'Inmueble\s*\(([^)]+)\)', txt(h))
-    return m.group(1).strip() if m else 'Otros'
+    return m.group(1).strip() if m else None   # vehículo u otro bien mueble: no va al catálogo de inmuebles
 
 def ficha(item):
     sid, lots, kind, est, sub = item; out = []
@@ -157,7 +157,9 @@ def ficha(item):
             r = vivienda(sid, None, est, g, b)
             if r: out.append(r)
         elif kind == 'i':
-            r = vivienda(sid, None, est, g, b) if es_vivienda(b.get('Descripción', '')) else inmueble(sid, None, est, g, b, SUBT.get(sub, 'Otros'))
+            tb = SUBT.get(sub, 'Otros')
+            if tb == 'Otros': tb = tipo_urbana(sin_acentos(b.get('Descripción', '') + ' ' + b.get('Dirección', '')))
+            r = vivienda(sid, None, est, g, b) if es_vivienda(b.get('Descripción', '')) else inmueble(sid, None, est, g, b, tb)
             if r: out.append(r)
         else: out.append(vehiculo(sid, est, g, b, docs))
     else:
@@ -173,6 +175,10 @@ def ficha(item):
             if es_vivienda(b.get('Descripción', '')): r = vivienda(sid, k, est, g, b)
             else:
                 tl = tipo_lote(hk)
+                if tl is None: continue
+                if tl == 'Otros':
+                    t0 = txt(hk); t0 = t0[t0.find('Lote ' + str(k)):]
+                    tl = tipo_urbana(sin_acentos(t0[:600]))
                 r = vivienda(sid, k, est, g, b) if tl == 'Vivienda' else inmueble(sid, k, est, g, b, 'Local comercial' if tl.startswith('Local') else tl)
             if r: out.append(r)
     return out
@@ -198,8 +204,8 @@ def sin_acentos(s):
     return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn').upper().strip()
 
 def tipo_urbana(d):
-    for p, l in [(r'\bLOCAL', 'Local comercial'), (r'GARAJE|APARCAMIENTO|PARKING', 'Garaje'), (r'TRASTERO', 'Trastero'),
-                 (r'\bNAVE', 'Nave industrial'), (r'SOLAR|PARCELA', 'Solar')]:
+    for p, l in [(r'TRASTERO', 'Trastero'), (r'GARAJE|APARCAMIENTO|PARKING|PLAZA DE (?:GARAJE|APARCAMIENTO)', 'Garaje'),
+                 (r'\bNAVE', 'Nave industrial'), (r'\bLOCAL', 'Local comercial'), (r'SOLAR|PARCELA', 'Solar'), (r'RUSTIC|TIERRA DE|FINCA DE (?:SECANO|REGADIO)', 'Finca rústica')]:
         if re.search(p, d): return l
     return 'Otros'
 
@@ -258,7 +264,7 @@ def seg_social(provs):
                 rc = re.search(r'REF(?:ERENCIA)?\.?\s*CATASTRAL:?\s*([0-9A-Z]{14})', todo)
                 if rc: r['rc'] = rc.group(1)
                 m = re.search(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s?(?:M2|M²|METROS CUADRADOS)', todo)
-                if m: r['m2'] = m.group(1)
+                if m and (num(m.group(1)) or 0) >= 20: r['m2'] = m.group(1)
                 if codigo == '0102' and es_vivienda(gen + ' ' + det):
                     r['k'] = 'v'
                     tg = [l for pat, l in ETQ if re.search(pat, gen + ' ' + det, re.I)]
