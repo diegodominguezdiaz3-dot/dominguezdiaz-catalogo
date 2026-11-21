@@ -54,7 +54,12 @@ def buscar1(estado, tipo, sub='', orden='asc'):
     f += [('campo[15]','SUBASTA.ID_SUBASTA_BUSCAR'),('dato[15]',''),('campo[16]','SUBASTA.ACREEDORES'),('dato[16]',''),
           ('campo[17]','SUBASTA.FECHA_FIN'),('dato[17][0]',''),('dato[17][1]',''),('campo[18]','SUBASTA.FECHA_INICIO'),('dato[18][0]',''),('dato[18][1]',''),
           ('page_hits','500'),('sort_field[0]','SUBASTA.FECHA_FIN'),('sort_order[0]',orden),('accion','Buscar')]
-    r = S.post(BASE + 'subastas_ava.php', data=f, timeout=60); r.raise_for_status()
+    for i in range(4):
+        try:
+            r = S.post(BASE + 'subastas_ava.php', data=f, timeout=60); r.raise_for_status(); break
+        except requests.RequestException:
+            if i == 3: raise
+            time.sleep(20 * (i + 1))
     out = []
     for li in re.findall(r'<li class="resultado-busqueda">(.*?)</li>', r.text, re.S):
         m = re.search(r'idSub=([^&"]+)', li)
