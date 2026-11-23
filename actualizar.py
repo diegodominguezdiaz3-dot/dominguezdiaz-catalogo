@@ -98,6 +98,16 @@ def es_vivienda(d):
     ig = re.search(r'plaza de (garaje|aparcamiento)|plaza de parking|trastero|local comercial|\blocal\b|solar\b|parcela', d)
     return bool(iv) and (not ig or iv.start() < ig.start())
 
+def parte(t):
+    """Si no se subasta el inmueble entero, devuelve qué parte se subasta."""
+    if re.search(r'aprovecham\w*\.? (?:por |de )?turnos|multipropiedad|derecho de uso .{0,20}turnos', t, re.I): return 'Multipropiedad (solo unas semanas al año)'
+    if re.search(r'nuda propiedad', t, re.I) and not re.search(r'100\s?% (?:del|de la) pleno dominio', t, re.I): return 'Solo la nuda propiedad'
+    m = re.search(r'participaci[oó]n indivisa (?:de )?(?:una )?(\d+\s?/\s?\d+|\d+(?:[.,]\d+)?\s?%)', t, re.I)
+    if m: return 'Solo una parte (' + re.sub(r'\s', '', m.group(1)) + ')'
+    m = re.search(r'(?<![\d.,])(\d{1,2}(?:[.,]\d+)?)\s?%\s?(?:del|de la|de)\s?(?:pleno dominio|propiedad|finca|vivienda|inmueble)', t, re.I)
+    if m and float(m.group(1).replace(',', '.')) < 100: return 'Solo el ' + m.group(1) + ' %'
+    return None
+
 def vivienda(sid, lo, est, g, b):
     if ocupada(b): return None
     d = b.get('Descripción', ''); t = d + ' ' + b.get('Información adicional', '')
@@ -115,6 +125,8 @@ def vivienda(sid, lo, est, g, b):
     m = re.search(r'(\d|uno|una|dos|tres|cuatro|cinco|seis)\s+(?:dormitorios|habitaciones)', t, re.I)
     if m: r['dor'] = NUM.get(m.group(1).lower()) or int(m.group(1))
     if b.get('Situación posesoria', '').startswith('Sin ocupantes'): r['pos'] = 'Sin ocupantes'
+    pt = parte(t + ' ' + g.get('_titulo', ''))
+    if pt: r['pt'] = pt
     return r
 
 def vehiculo(sid, est, g, b, docs):
@@ -145,6 +157,8 @@ def inmueble(sid, lo, est, g, b, tb):
     m = re.search(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s?(?:m2|m²|mts|metros cuadrados)', t, re.I)
     if m: r['m2'] = m.group(1)
     if b.get('Situación posesoria', '').startswith('Sin ocupantes'): r['pos'] = 'Sin ocupantes'
+    pt = parte(t + ' ' + g.get('_titulo', ''))
+    if pt: r['pt'] = pt
     return r
 
 def tipo_lote(h):
