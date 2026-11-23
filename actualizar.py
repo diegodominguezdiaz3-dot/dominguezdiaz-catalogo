@@ -104,7 +104,7 @@ def parte(t):
     if re.search(r'nuda propiedad', t, re.I) and not re.search(r'100\s?% (?:del|de la) pleno dominio', t, re.I): return 'Solo la nuda propiedad'
     m = re.search(r'participaci[oó]n indivisa (?:de )?(?:una )?(\d+\s?/\s?\d+|\d+(?:[.,]\d+)?\s?%)', t, re.I)
     if m: return 'Solo una parte (' + re.sub(r'\s', '', m.group(1)) + ')'
-    m = re.search(r'(?<![\d.,])(\d{1,2}(?:[.,]\d+)?)\s?%\s?(?:del|de la|de)\s?(?:pleno dominio|propiedad|finca|vivienda|inmueble)', t, re.I)
+    m = re.search(r'(?<![\d.,])(\d{1,2}(?:[.,]\d+)?)\s?%\s?(?:(?:del|de la|de)\s)?(?:pleno dominio|propiedad|finca|vivienda|inmueble)(?!\s+restante)', t, re.I)
     if m and float(m.group(1).replace(',', '.')) < 100: return 'Solo el ' + m.group(1) + ' %'
     return None
 
