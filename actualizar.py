@@ -101,11 +101,11 @@ def es_vivienda(d):
 def parte(t):
     """Si no se subasta el inmueble entero, devuelve qué parte se subasta."""
     if re.search(r'aprovecham\w*\.? (?:por |de )?turnos|multipropiedad|derecho de uso .{0,20}turnos', t, re.I): return 'Multipropiedad (solo unas semanas al año)'
-    if re.search(r'nuda propiedad', t, re.I) and not re.search(r'100\s?% (?:del|de la) pleno dominio', t, re.I): return 'Solo la nuda propiedad'
     m = re.search(r'participaci[oó]n indivisa (?:de )?(?:una )?(\d+\s?/\s?\d+|\d+(?:[.,]\d+)?\s?%)', t, re.I)
     if m: return 'Solo una parte (' + re.sub(r'\s', '', m.group(1)) + ')'
-    m = re.search(r'(?<![\d.,])(\d{1,2}(?:[.,]\d+)?)\s?%\s?(?:(?:del|de la|de)\s)?(?:pleno dominio|propiedad|finca|vivienda|inmueble)(?!\s+restante)', t, re.I)
+    m = re.search(r'(?<![\d.,])(\d{1,2}(?:[.,]\d+)?)\s?%\s?(?:(?:del|de la|de)\s)?(?:pleno dominio|nuda propiedad|usufructo|propiedad|finca|vivienda|inmueble)(?!\s+restante)', t, re.I)
     if m and float(m.group(1).replace(',', '.')) < 100: return 'Solo el ' + m.group(1) + ' %'
+    if re.search(r'nuda propiedad', t, re.I) and not re.search(r'100\s?% (?:del|de la) pleno dominio', t, re.I): return 'Solo la nuda propiedad'
     return None
 
 def vivienda(sid, lo, est, g, b):
